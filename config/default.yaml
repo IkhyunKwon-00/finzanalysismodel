@@ -1,0 +1,95 @@
+# ─── Finz Analysis Model – Default Configuration ────────────────────────────
+
+# ── Data ────────────────────────────────────────────────────────────────────
+data:
+  # Directory for raw data files (Financial PhraseBank txt, CSV datasets)
+  raw_dir: "data/raw"
+  # Historical price source
+  price_source: "yfinance"
+  # Symbols to collect training data for
+  symbols:
+    - TSLA
+    - NVDA
+    - GOOGL
+    - PLTR
+    - AAPL
+    - IONQ
+    - MSFT
+    - AMZN
+    - ASML
+    - ORCL
+    - SMR
+    - INTC
+    - IREN
+  # Macro tickers for contextual features
+  macro_tickers:
+    sp500: "^GSPC"
+    gold: "GC=F"
+    wti: "CL=F"
+    bitcoin: "BTC-USD"
+    vix: "^VIX"
+    dxy: "DX-Y.NYB"
+  # Date range for training data collection
+  start_date: "2020-01-01"
+  end_date: null                    # null = today
+  # Prediction horizons (days)
+  horizons: [30, 180, 360]
+
+# ── Text Encoder ────────────────────────────────────────────────────────────
+text_encoder:
+  model_name: "distilbert-base-uncased"   # HuggingFace model id
+  max_length: 512
+  freeze_layers: 4                        # freeze first N transformer layers
+
+# ── Numerical Features ──────────────────────────────────────────────────────
+numerical:
+  # per-symbol features
+  stock_features:
+    - close
+    - volume
+    - market_cap
+    - revenue_ttm
+    - operating_margin
+  # macro features
+  macro_features:
+    - sp500_close
+    - sp500_return_5d
+    - gold_close
+    - wti_close
+    - btc_close
+    - vix_close
+    - dxy_close
+  # window sizes for rolling features
+  rolling_windows: [5, 20, 60]
+
+# ── Model Architecture ──────────────────────────────────────────────────────
+model:
+  text_embed_dim: 768                     # from DistilBERT
+  numerical_hidden: 128
+  fusion_hidden: 256
+  num_heads: 4                            # cross-attention heads
+  dropout: 0.3
+  num_horizons: 3                         # 30d / 180d / 360d
+
+# ── Training ────────────────────────────────────────────────────────────────
+training:
+  batch_size: 32
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  epochs: 30
+  patience: 5                             # early stopping
+  scheduler: "cosine"                     # cosine | linear | none
+  warmup_ratio: 0.1
+  val_split: 0.15
+  test_split: 0.10
+  seed: 42
+  device: "auto"                          # auto | cpu | cuda | mps
+
+# ── API Server ──────────────────────────────────────────────────────────────
+api:
+  host: "0.0.0.0"
+  port: 8000
+  model_path: "models/best/model.pt"
+  cors_origins:
+    - "http://localhost:3000"
+    - "https://*.vercel.app"
