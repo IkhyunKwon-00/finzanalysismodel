@@ -107,7 +107,14 @@ def build_dataset(cfg: dict | None = None, output_dir: str = "data/processed") -
     out_path.mkdir(parents=True, exist_ok=True)
 
     print("[1/4] Collecting news from external sources...")
-    articles = collect_all_news(symbols=symbols, raw_dir=raw_dir)
+    prediction_indices: dict[str, str] = cfg["data"].get("prediction_indices", {})
+    gdelt_queries: dict[str, str] = cfg["data"].get("gdelt_symbol_queries", {})
+    articles = collect_all_news(
+        symbols=symbols,
+        raw_dir=raw_dir,
+        gdelt_queries=gdelt_queries or None,
+        gdelt_start_date=start_date,
+    )
     if not articles:
         print("No articles found. Exiting.")
         return out_path / "dataset.parquet"
@@ -132,13 +139,20 @@ def build_dataset(cfg: dict | None = None, output_dir: str = "data/processed") -
             continue
 
         # Get price series for this symbol
-        try:
-            if len(symbols) == 1:
-                price_series = all_prices["Close"].dropna()
-            else:
-                price_series = all_prices[symbol]["Close"].dropna()
-        except (KeyError, TypeError):
-            continue
+        # prediction_indices (e.g. ^GSPC, GC=F) use the macro_df price columns
+        if symbol in prediction_indices:
+            price_col = prediction_indices[symbol]
+            if macro_df.empty or price_col not in macro_df.columns:
+                continue
+            price_series = macro_df[price_col].dropna()
+        else:
+            try:
+                if len(symbols) == 1:
+                    price_series = all_prices["Close"].dropna()
+                else:
+                    price_series = all_prices[symbol]["Close"].dropna()
+            except (KeyError, TypeError):
+                continue
 
         # Future returns → labels
         returns = compute_future_returns(price_series, pub_date, horizons)

@@ -20,8 +20,12 @@ Column schema (all sources produce the same dict shape):
 
 from __future__ import annotations
 
-from datetime import datetime
+import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import pandas as pd
 import yfinance as yf
@@ -186,10 +190,10 @@ def load_csv_dataset(filepath: str | Path) -> list[dict]:
 
 
 def load_csv_datasets(raw_dir: str | Path) -> list[dict]:
-    """Auto-discover and load all *.csv files in raw_dir."""
+    """Auto-discover and load all *.csv files in raw_dir (recursive, includes Kaggle subdirs)."""
     raw_dir = Path(raw_dir)
     all_rows: list[dict] = []
-    csv_files = sorted(raw_dir.glob("*.csv"))
+    csv_files = sorted(raw_dir.glob("**/*.csv"))  # recursive: catches Kaggle downloaded subdirs
     if not csv_files:
         print(f"No CSV files found in {raw_dir}")
     for csv_file in csv_files:
@@ -197,20 +201,194 @@ def load_csv_datasets(raw_dir: str | Path) -> list[dict]:
     return all_rows
 
 
+# ─── Source 4: GDELT Historical News ─────────────────────────────────────────
+
+# GDELT Full Text Search API covers online news from 2015-02-19 onward
+_GDELT_MIN_DATE = pd.Timestamp("2015-02-19")
+
+
+def fetch_gdelt_news(
+    symbol_queries: dict[str, str],
+    start_date: str = "2015-01-01",
+    max_per_symbol: int = 2000,
+    sleep_between: float = 1.5,
+) -> list[dict]:
+    """Fetch historical financial news from GDELT 2.0 Full Text Search API.
+
+    GDELT (Global Database of Events, Language and Tone) is a free, global
+    news archive covering millions of online articles from ~2015 onward.
+    No API key required.
+
+    Args:
+        symbol_queries: Mapping of ticker → search query string, e.g.
+            {"^GSPC": "S&P 500 stock market", "GC=F": "gold price commodity"}
+        start_date: Earliest date to fetch (GDELT covers from 2015-02-19).
+        max_per_symbol: Max articles to collect per symbol.
+        sleep_between: Seconds between API calls to avoid overloading the service.
+
+    Returns:
+        List of article dicts in the standard external_data schema.
+    """
+    if not symbol_queries:
+        return []
+
+    effective_start = max(pd.Timestamp(start_date), _GDELT_MIN_DATE)
+    end_ts = pd.Timestamp.now().normalize()
+
+    # Build quarterly date chunks from effective_start to today
+    date_chunks: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    current = effective_start
+    while current < end_ts:
+        chunk_end = min(current + pd.DateOffset(months=3), end_ts)
+        date_chunks.append((current, chunk_end))
+        current = chunk_end
+
+    all_articles: list[dict] = []
+    for symbol, query in symbol_queries.items():
+        symbol_articles: list[dict] = []
+        # Distribute evenly; GDELT hard-limit is 250 records per request
+        per_chunk = min(max(1, max_per_symbol // max(len(date_chunks), 1)), 250)
+
+        for chunk_start, chunk_end in date_chunks:
+            if len(symbol_articles) >= max_per_symbol:
+                break
+            params = {
+                "query": query,
+                "mode": "artlist",
+                "maxrecords": per_chunk,
+                "startdatetime": chunk_start.strftime("%Y%m%d%H%M%S"),
+                "enddatetime": chunk_end.strftime("%Y%m%d%H%M%S"),
+                "sort": "DateDesc",
+                "format": "json",
+            }
+            url = "https://api.gdeltproject.org/api/v2/doc/doc?" + urlencode(params)
+            try:
+                with urlopen(url, timeout=30) as resp:
+                    data = json.loads(resp.read().decode())
+                for art in data.get("articles", []):
+                    raw_date = art.get("seendate", "")
+                    try:
+                        pub_dt = datetime.strptime(raw_date, "%Y%m%dT%H%M%SZ").replace(
+                            tzinfo=timezone.utc
+                        )
+                        pub_iso = pub_dt.isoformat()
+                    except ValueError:
+                        pub_iso = raw_date
+                    title = art.get("title", "").strip()
+                    if not title:
+                        continue
+                    symbol_articles.append({
+                        "title_en": title,
+                        "summary_en": "",
+                        "symbol": symbol,
+                        "topic_id": f"gdelt:{symbol}",
+                        "published_at": pub_iso,
+                        "source": art.get("domain", "gdelt"),
+                        "url": art.get("url", ""),
+                        "dataset_source": "gdelt",
+                        "sentiment_label": "",
+                    })
+                time.sleep(sleep_between)
+            except Exception as e:
+                print(
+                    f"  GDELT warning ({symbol} [{chunk_start.date()}–{chunk_end.date()}]): {e}"
+                )
+                time.sleep(sleep_between * 2)
+
+        kept = symbol_articles[:max_per_symbol]
+        all_articles.extend(kept)
+        print(f"  GDELT {symbol}: {len(kept)} articles")
+
+    print(f"GDELT: {len(all_articles)} total articles")
+    return all_articles
+
+
+# ─── Source 5: Kaggle Datasets ────────────────────────────────────────────────
+
+_KAGGLE_RECOMMENDED = [
+    "aaron7sun/stocknews",              # Dow Jones daily top headlines 2008-2016 (~45 k rows)
+    "miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests",  # ~4 M articles with tickers
+]
+
+
+def download_kaggle_datasets(
+    dataset_slugs: list[str] | None = None,
+    raw_dir: str | Path = "data/raw",
+) -> None:
+    """Download Kaggle financial news datasets into raw_dir.
+
+    Downloaded CSV files are automatically picked up by load_csv_datasets().
+
+    Requirements:
+        pip install kaggle
+        export KAGGLE_USERNAME=your_username
+        export KAGGLE_KEY=your_api_key
+        # or create ~/.kaggle/kaggle.json: {"username":"...","key":"..."}
+
+    Trigger from CLI:
+        python -m scripts.collect_data --kaggle
+
+    Recommended slugs (defaults if dataset_slugs is None):
+        - "aaron7sun/stocknews"            (Dow Jones headlines 2008-2016)
+        - "miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests"
+    """
+    slugs = dataset_slugs if dataset_slugs is not None else _KAGGLE_RECOMMENDED
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import kaggle  # type: ignore[import]
+        kaggle.api.authenticate()
+    except ImportError:
+        print("kaggle package not installed. Run: pip install kaggle")
+        print("Then set KAGGLE_USERNAME and KAGGLE_KEY environment variables.")
+        return
+    except Exception as e:
+        print(f"Kaggle authentication failed: {e}")
+        print("Set KAGGLE_USERNAME and KAGGLE_KEY env vars, or create ~/.kaggle/kaggle.json")
+        return
+
+    for slug in slugs:
+        try:
+            print(f"Downloading Kaggle dataset: {slug} ...")
+            kaggle.api.dataset_download_files(
+                slug,
+                path=str(raw_dir),
+                unzip=True,
+                quiet=False,
+            )
+            print(f"  → Extracted to {raw_dir}/")
+        except Exception as e:
+            print(f"  Failed to download {slug}: {e}")
+
+
 # ─── Unified entry point ─────────────────────────────────────────────────────
 
 def collect_all_news(
     symbols: list[str],
     raw_dir: str | Path = "data/raw",
+    gdelt_queries: dict[str, str] | None = None,
+    gdelt_start_date: str = "2015-01-01",
+    gdelt_max_per_symbol: int = 2000,
 ) -> list[dict]:
-    """Collect and deduplicate news from all three sources.
+    """Collect and deduplicate news from all available sources.
 
     Sources (in priority order for deduplication):
-    1. Yahoo Finance per-symbol news (runtime fetch)
+    1. Yahoo Finance per-symbol news (runtime fetch, recent only)
     2. Financial PhraseBank (data/raw/financial_phrasebank.txt)
-    3. Any *.csv files in data/raw/
+    3. CSV / Kaggle datasets (data/raw/**/*.csv, recursive)
+    4. GDELT Full Text Search (free historical news 2015+, for macro indices)
 
-    Returns a deduplicated list of article dicts.
+    Args:
+        symbols: Ticker symbols for Yahoo Finance news.
+        raw_dir: Directory containing PhraseBank and CSV files.
+        gdelt_queries: {symbol: "search query"} for GDELT historical fetch.
+            Typically for macro indices, e.g. {"^GSPC": "S&P 500 stock market"}.
+        gdelt_start_date: Earliest date for GDELT queries.
+        gdelt_max_per_symbol: Max GDELT articles per symbol.
+
+    Returns:
+        Deduplicated list of article dicts.
     """
     raw_dir = Path(raw_dir)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +397,14 @@ def collect_all_news(
     all_articles.extend(fetch_yahoo_news(symbols))
     all_articles.extend(load_financial_phrasebank(raw_dir / "financial_phrasebank.txt"))
     all_articles.extend(load_csv_datasets(raw_dir))
+    if gdelt_queries:
+        all_articles.extend(
+            fetch_gdelt_news(
+                gdelt_queries,
+                start_date=gdelt_start_date,
+                max_per_symbol=gdelt_max_per_symbol,
+            )
+        )
 
     # Deduplicate by lowercased title
     seen: set[str] = set()

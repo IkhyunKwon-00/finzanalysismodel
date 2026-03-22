@@ -70,8 +70,26 @@ data:
     bitcoin: "BTC-USD"
     vix: "^VIX"
     dxy: "DX-Y.NYB"
-  # Date range for training data collection (15 years of history)
-  start_date: "2011-01-01"
+  # Prediction targets that use macro price series (not individual stock prices)
+  # Maps symbol → column name in macro_df (from macro_tickers above)
+  prediction_indices:
+    "^GSPC": "sp500_close"   # S&P 500 Index → sp500_close in macro_df
+    "GC=F":  "gold_close"    # Gold Futures  → gold_close in macro_df
+
+  # GDELT Full Text Search queries per symbol (free historical news, 2015+, no API key)
+  # Only needed for symbols not well-covered by Yahoo Finance (indices, commodities)
+  gdelt_symbol_queries:
+    "^GSPC": "S&P 500 stock market index recession bear bull rally"
+    "GC=F":  "gold price commodity inflation hedge Federal Reserve rate"
+
+  # Kaggle financial news datasets (optional, requires: pip install kaggle + credentials)
+  # Trigger download: python -m scripts.collect_data --kaggle
+  kaggle_datasets:
+    - "aaron7sun/stocknews"                                              # Dow Jones headlines 2008–2016 (~45k)
+    - "miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests"   # ~4M articles with tickers
+
+  # Date range for training data collection
+  start_date: "2000-01-01"
   end_date: null                    # null = today
   # Prediction horizons (days)
   horizons: [30, 180, 360]
