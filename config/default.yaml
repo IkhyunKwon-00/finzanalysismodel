@@ -6,8 +6,9 @@ data:
   raw_dir: "data/raw"
   # Historical price source
   price_source: "yfinance"
-  # Symbols to collect training data for
+  # Symbols to collect training data for (diverse sectors to avoid overfitting)
   symbols:
+    # ── Tech / AI ──
     - TSLA
     - NVDA
     - GOOGL
@@ -21,6 +22,46 @@ data:
     - SMR
     - INTC
     - IREN
+    # ── Finance ──
+    - JPM       # JP Morgan
+    - GS        # Goldman Sachs
+    - V         # Visa
+    - BRK-B     # Berkshire Hathaway
+    # ── Energy ──
+    - XOM       # ExxonMobil
+    - CVX       # Chevron
+    - NEE       # NextEra Energy (renewable)
+    - ENPH      # Enphase Energy (solar)
+    # ── Healthcare / Bio ──
+    - JNJ       # Johnson & Johnson
+    - PFE       # Pfizer
+    - MRNA      # Moderna
+    - ABBV      # AbbVie
+    # ── Consumer / Food ──
+    - KO        # Coca-Cola
+    - PEP       # PepsiCo
+    - MCD       # McDonald's
+    - PG        # Procter & Gamble
+    # ── Retail / Apparel ──
+    - NKE       # Nike
+    - TJX       # TJ Maxx
+    - LULU      # Lululemon
+    # ── Defense / Aerospace ──
+    - LMT       # Lockheed Martin
+    - RTX       # RTX (Raytheon)
+    - NOC       # Northrop Grumman
+    # ── Transportation / Logistics ──
+    - UPS       # UPS
+    - FDX       # FedEx
+    - DAL       # Delta Air Lines
+    # ── Materials / Mining ──
+    - FCX       # Freeport-McMoRan (copper)
+    - NEM       # Newmont (gold mining)
+    - LIN       # Linde (industrial gas)
+    # ── Electronic Components / Semiconductor ──
+    - TXN       # Texas Instruments
+    - ADI       # Analog Devices
+    - MCHP      # Microchip Technology
   # Macro tickers for contextual features
   macro_tickers:
     sp500: "^GSPC"
@@ -29,8 +70,8 @@ data:
     bitcoin: "BTC-USD"
     vix: "^VIX"
     dxy: "DX-Y.NYB"
-  # Date range for training data collection
-  start_date: "2020-01-01"
+  # Date range for training data collection (15 years of history)
+  start_date: "2011-01-01"
   end_date: null                    # null = today
   # Prediction horizons (days)
   horizons: [30, 180, 360]

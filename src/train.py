@@ -147,15 +147,15 @@ def train(cfg: dict | None = None, data_path: str = "data/processed/dataset.parq
         train_ds,
         batch_size=cfg["training"]["batch_size"],
         shuffle=True,
-        num_workers=2,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=(device.type == "cuda"),
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=cfg["training"]["batch_size"],
         shuffle=False,
-        num_workers=2,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=(device.type == "cuda"),
     )
 
     print(f"Train: {len(train_ds)} | Val: {len(val_ds)}")

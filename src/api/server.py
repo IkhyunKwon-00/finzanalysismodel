@@ -23,6 +23,7 @@ from transformers import AutoTokenizer
 
 from src.config import load_config
 from src.models.momentum_model import FinzMomentumModel
+from src.models.sentence_attribution import get_sentence_attributions
 
 
 # ─── Request / Response schemas ──────────────────────────────────────────────
@@ -34,6 +35,13 @@ class PredictRequest(BaseModel):
     numerical_features: list[float] | None = Field(
         None, description="Pre-computed numerical features (optional, for advanced use)"
     )
+    explain: bool = Field(False, description="If true, return key sentences that most influenced the prediction")
+
+
+class SentenceAttribution(BaseModel):
+    sentence: str
+    attribution_score: float  # 0-100, higher = more causal influence
+    rank: int
 
 
 class HorizonPrediction(BaseModel):
@@ -49,6 +57,8 @@ class PredictResponse(BaseModel):
     model_version: str
     # finzfinz-compatible sentiment (for direct integration)
     sentiment: dict
+    # Sentence-level causal attribution (only when explain=true)
+    key_sentences: list[SentenceAttribution] | None = None
 
 
 # ─── Global state ────────────────────────────────────────────────────────────
@@ -211,6 +221,26 @@ async def predict(req: PredictRequest):
             direction=direction,
         ))
 
+    # ── Sentence attribution (if requested) ────────────────────
+    key_sentences = None
+    if req.explain:
+        raw_text = f"{req.title} [SEP] {req.summary}"
+        sentence_results = get_sentence_attributions(
+            model=model,
+            tokenizer=tokenizer,
+            text=raw_text,
+            input_ids=encoding["input_ids"],
+            attention_mask=encoding["attention_mask"],
+            numerical=numerical,
+            target_horizon=0,  # primary horizon (30d)
+            target_type="classification",
+            n_steps=30,
+            top_k=5,
+        )
+        key_sentences = [
+            SentenceAttribution(**s) for s in sentence_results
+        ]
+
     # finzfinz-compatible sentiment: use shortest horizon (30d) as primary
     primary = preds[0]
     return PredictResponse(
@@ -222,6 +252,7 @@ async def predict(req: PredictRequest):
             "confidencePct": primary.confidence_pct,
             "direction": primary.direction,
         },
+        key_sentences=key_sentences,
     )
 
 

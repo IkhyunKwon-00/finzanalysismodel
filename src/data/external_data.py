@@ -36,7 +36,8 @@ def fetch_yahoo_news(
 ) -> list[dict]:
     """Fetch recent news from Yahoo Finance for each symbol via yfinance.
 
-    Yahoo Finance typically returns the ~50-100 most recent articles per ticker.
+    Yahoo Finance typically returns the ~10-50 most recent articles per ticker.
+    Handles both legacy flat format and newer nested content format.
     """
     all_news: list[dict] = []
     for symbol in tqdm(symbols, desc="Yahoo Finance news"):
@@ -44,16 +45,36 @@ def fetch_yahoo_news(
             ticker = yf.Ticker(symbol)
             news_items = ticker.news or []
             for item in news_items[:max_per_symbol]:
-                pub_ts = item.get("providerPublishTime", 0)
-                pub_date = datetime.fromtimestamp(pub_ts).isoformat() if pub_ts else ""
+                # Handle nested content format (yfinance >= 0.2.36)
+                content = item.get("content", item)
+                title = content.get("title", "")
+                summary = content.get("summary", content.get("description", ""))
+                # Timestamp handling
+                pub_date = content.get("pubDate", "")
+                if not pub_date:
+                    pub_ts = content.get("providerPublishTime", 0)
+                    pub_date = datetime.fromtimestamp(pub_ts).isoformat() if pub_ts else ""
+                # Provider
+                provider = content.get("provider", {})
+                if isinstance(provider, dict):
+                    source = provider.get("displayName", "Yahoo Finance")
+                else:
+                    source = content.get("publisher", "Yahoo Finance")
+                # URL
+                canon = content.get("canonicalUrl", {})
+                if isinstance(canon, dict):
+                    url = canon.get("url", "")
+                else:
+                    url = content.get("link", "")
+
                 all_news.append({
-                    "title_en": item.get("title", ""),
-                    "summary_en": item.get("summary", ""),
+                    "title_en": title,
+                    "summary_en": summary,
                     "symbol": symbol,
                     "topic_id": f"symbol:{symbol}",
                     "published_at": pub_date,
-                    "source": item.get("publisher", "Yahoo Finance"),
-                    "url": item.get("link", ""),
+                    "source": source,
+                    "url": url,
                     "dataset_source": "yahoo_finance",
                     "sentiment_label": "",
                 })

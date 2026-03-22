@@ -29,9 +29,11 @@ def compute_future_returns(
     results = {}
     for h in horizons:
         target_date = date + timedelta(days=h)
-        # Find the closest trading day
-        mask_current = prices.index <= pd.Timestamp(date)
-        mask_future = prices.index <= pd.Timestamp(target_date)
+        # Find the closest trading day (ensure tz-naive comparison)
+        ts_current = pd.Timestamp(date).tz_localize(None)
+        ts_future = pd.Timestamp(target_date).tz_localize(None)
+        mask_current = prices.index <= ts_current
+        mask_future = prices.index <= ts_future
         if mask_current.sum() == 0 or mask_future.sum() == 0:
             results[h] = None
             continue
@@ -62,7 +64,8 @@ def return_to_label(return_pct: float | None, threshold: float = 3.0) -> int:
 def _rolling_features(prices_series: pd.Series, date: pd.Timestamp, windows: list[int]) -> dict:
     """Compute rolling return/volatility features for a price series up to a date."""
     features = {}
-    mask = prices_series.index <= date
+    ts = pd.Timestamp(date).tz_localize(None)
+    mask = prices_series.index <= ts
     available = prices_series[mask]
     if len(available) < 2:
         for w in windows:
@@ -146,7 +149,8 @@ def build_dataset(cfg: dict | None = None, output_dir: str = "data/processed") -
         # Macro features at article date
         macro_feats = {}
         if not macro_df.empty:
-            macro_mask = macro_df.index <= pub_date
+            ts_pub = pd.Timestamp(pub_date).tz_localize(None)
+            macro_mask = macro_df.index <= ts_pub
             if macro_mask.sum() > 0:
                 macro_row = macro_df[macro_mask].iloc[-1]
                 macro_feats = macro_row.to_dict()
